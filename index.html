@@ -54,6 +54,12 @@ h1 {
 .input-section input[type="range"] {
     accent-color: var(--accent); width: 200px;
 }
+.input-section input[type="date"] {
+    background: var(--bg); border: 1px solid var(--text-muted); color: var(--text);
+    padding: 0.5rem 0.75rem; border-radius: var(--radius-sm);
+    font-family: var(--font); font-size: 0.85rem; cursor: pointer;
+}
+.input-section input[type="date"]:focus { outline: none; border-color: var(--accent); }
 .stats-grid {
     display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem;
     margin-bottom: 1.5rem;
@@ -83,8 +89,9 @@ h1 {
     cursor: pointer; transition: all 0.15s;
     position: relative;
 }
-.box.lived { background: var(--accent); }
-.box.current { background: var(--accent-light); }
+.box.lived { background: #2a2a2a; } /* past weeks — grey */
+.box.current { background: var(--accent); } /* current week — orange accent */
+.box.future { background: var(--bg); } /* future weeks — dark */
 .box:hover {
     transform: scale(1.8); z-index: 10;
     box-shadow: 0 0 12px var(--accent-glow);
@@ -114,6 +121,9 @@ footer a:hover { color: var(--accent); }
     <h1>Life Calendar</h1>
     <p class="tagline">Your life in weeks — 90 years at a glance</p>
     <div class="input-section">
+        <label for="dobInput">Date of Birth:</label>
+        <input type="date" id="dobInput">
+        <span style="color:var(--text-muted);font-size:0.75rem;">or</span>
         <label for="ageInput">Age:</label>
         <input type="number" id="ageInput" min="0" max="90" value="25">
         <input type="range" id="ageSlider" min="0" max="90" value="25">
@@ -136,6 +146,7 @@ footer a:hover { color: var(--accent); }
 const TOTAL_YEARS = 90;
 const WEEKS_PER_YEAR = 52;
 
+const $dobInput = document.getElementById('dobInput');
 const $ageInput = document.getElementById('ageInput');
 const $ageSlider = document.getElementById('ageSlider');
 const $yearsLived = document.getElementById('yearsLived');
@@ -144,6 +155,27 @@ const $weeksLived = document.getElementById('weeksLived');
 const $weeksLeft = document.getElementById('weeksLeft');
 const $lifePct = document.getElementById('lifePct');
 const $calendar = document.getElementById('calendar');
+
+function getAgeFromDOB(dobStr) {
+    if (!dobStr) return null;
+    const birth = new Date(dobStr + 'T00:00:00');
+    if (isNaN(birth.getTime())) return null;
+    const now = new Date();
+    let age = now.getFullYear() - birth.getFullYear();
+    const mDiff = now.getMonth() - birth.getMonth();
+    if (mDiff < 0 || (mDiff === 0 && now.getDate() < birth.getDate())) {
+        age--;
+    }
+    return Math.max(0, Math.min(TOTAL_YEARS, age));
+}
+
+function getCurrentWeekOfYear() {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), 0, 1);
+    const diff = now - start;
+    const dayOfYear = Math.floor(diff / 86400000);
+    return Math.floor(dayOfYear / 7);
+}
 
 function render(age) {
     age = Math.min(TOTAL_YEARS, Math.max(0, Math.round(age)));
@@ -158,13 +190,28 @@ function render(age) {
     $weeksLeft.textContent = weeksRemaining.toLocaleString();
     $lifePct.textContent = 'You have used ' + pct.toFixed(1) + '% of your life';
 
+    // Calculate current week (global week index within 90 years)
+    const currentGlobalWeek = age > 0 ? (weeksLived - WEEKS_PER_YEAR + getCurrentWeekOfYear()) : 0;
+
     let html = '';
     let boxIdx = 0;
     for (let y = 0; y < TOTAL_YEARS; y++) {
         for (let w = 0; w < WEEKS_PER_YEAR; w++) {
-            const lived = boxIdx < weeksLived;
+            let cssClass = 'future';
+            if (boxIdx < weeksLived) {
+                // This week is fully lived (past)
+                cssClass = 'lived';
+            }
+            if (boxIdx === weeksLived || (boxIdx < weeksLived && boxIdx === weeksLived - 1 && age > 0 && w === getCurrentWeekOfYear())) {
+                // Current week
+                cssClass = 'current';
+            }
+            // If it's the exact current week
+            if (age > 0 && y === age - 1 && w === getCurrentWeekOfYear()) {
+                cssClass = 'current';
+            }
             const tip = 'Year ' + (y + 1) + ', Week ' + (w + 1);
-            html += '<div class="box' + (lived ? ' lived' : '') + '" data-tip="' + tip + '" data-idx="' + boxIdx + '"></div>';
+            html += '<div class="box ' + cssClass + '" data-tip="' + tip + '" data-idx="' + boxIdx + '"></div>';
             boxIdx++;
         }
     }
@@ -179,11 +226,39 @@ function syncAge(value) {
     localStorage.setItem('lc_age', v);
 }
 
-$ageInput.addEventListener('input', function() { syncAge(this.value); });
-$ageSlider.addEventListener('input', function() { syncAge(this.value); });
+function syncFromDOB() {
+    const dob = $dobInput.value;
+    if (!dob) return;
+    const age = getAgeFromDOB(dob);
+    if (age !== null) {
+        syncAge(age);
+        localStorage.setItem('lc_dob', dob);
+    }
+}
 
-const saved = localStorage.getItem('lc_age');
-syncAge(saved !== null ? parseInt(saved) : 25);
+$ageInput.addEventListener('input', function() {
+    $dobInput.value = '';
+    localStorage.removeItem('lc_dob');
+    syncAge(this.value);
+});
+$ageSlider.addEventListener('input', function() {
+    $dobInput.value = '';
+    localStorage.removeItem('lc_dob');
+    syncAge(this.value);
+});
+$dobInput.addEventListener('change', syncFromDOB);
+
+// Restore saved state
+const savedDob = localStorage.getItem('lc_dob');
+const savedAge = localStorage.getItem('lc_age');
+if (savedDob) {
+    $dobInput.value = savedDob;
+    syncFromDOB();
+} else if (savedAge !== null) {
+    syncAge(parseInt(savedAge));
+} else {
+    syncAge(25);
+}
 </script>
 </body>
 </html>
